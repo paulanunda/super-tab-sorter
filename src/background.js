@@ -86,6 +86,7 @@ async function sortTabGroups() {
         // Sort tab groups
         for (let i = 0; i < tabGroups.length; i++) {
             let groupId = tabGroups[i].id
+            let collapsed = tabGroups[i].collapsed
             chrome.tabGroups.move(groupId, { index: groupOffset });
             chrome.tabs.query({
                 windowId: currentWindow.id,
@@ -93,7 +94,7 @@ async function sortTabGroups() {
             }, function(tabs) {
                 groupOffset += tabs.length
                 // Sort tabs tab group's tabs while we have a reference to them
-                sortTabs(tabs, groupId, settings)
+                sortTabs(tabs, groupId, settings, collapsed)
             })
         }
         // Sort ungrouped tabs
@@ -112,7 +113,7 @@ async function sortTabGroups() {
     })
 }
 
-async function sortTabs(tabs, groupId, settings) {
+async function sortTabs(tabs, groupId, settings, collapsed = false) {
     if (tabs.length > 0) {
         TAB_SUSPENDER_EXTENSION_ID = settings.tabSuspenderExtensionId;
         SUSPENDED_PREFIX = 'chrome-extension://' + TAB_SUSPENDER_EXTENSION_ID + '/suspended.html#';
@@ -136,14 +137,18 @@ async function sortTabs(tabs, groupId, settings) {
             tabIds = tabs.map(function(tab){ return tab.id; })
         }
         // Relocate tabs to their new positions...
-        chrome.tabs.move(tabIds, { index: firstTabIndex });
+        await chrome.tabs.move(tabIds, { index: firstTabIndex });
 
         // Regroup tabs that were moved since moving them appears to remove them from the group...
         if (groupId > -1) {
-            chrome.tabs.group({
+            await chrome.tabs.group({
                 groupId: groupId,
                 tabIds: tabIds
             })
+            // Regrouping expands collapsed groups, so restore their collapsed state...
+            if (collapsed) {
+                await chrome.tabGroups.update(groupId, { collapsed: true })
+            }
         }
     }
 }
