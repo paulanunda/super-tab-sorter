@@ -85,7 +85,7 @@ function toggleTabSuspenderExtensionId() {
 }
 
 function toggleTabGroupOptions(sortBy) {
-    if (sortBy == "title" || sortBy == "url") {
+    if (sortBy == "title" || sortBy == "url" || sortBy == "urlTitle") {
         $('#groupFrom').prop('disabled', true);
         $('#preserveOrderWithinGroups').prop('disabled', true);
     } else {

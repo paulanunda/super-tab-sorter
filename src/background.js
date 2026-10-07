@@ -122,6 +122,7 @@ async function sortTabs(tabs, groupId, settings, collapsed = false) {
         switch (settings.sortBy) {
             case "url":
             case "title":
+            case "urlTitle":
                 sortByTitleOrUrl(tabs, settings.sortBy, settings.groupSuspendedTabs, settings.sortPinnedTabs);
                 break;
             case "custom":
@@ -198,6 +199,24 @@ function compareByUrlComponents(urlA, urlB) {
     return keyA.localeCompare(keyB);
 }
 
+// Sort by root domain, sub sort by subdomain, then title, falling back to the full URL for identical titles
+function compareByDomainAndTitle(urlA, titleA, urlB, titleB) {
+    var parsedA = psl.parse(urlA.hostname)
+    var parsedB = psl.parse(urlB.hostname)
+
+    // psl returns a null domain for hosts without a public suffix (e.g. localhost, IP addresses, chrome:// pages)
+    var domainCompare = (parsedA.domain || urlA.hostname).localeCompare(parsedB.domain || urlB.hostname);
+    if (domainCompare !== 0) return domainCompare;
+
+    var subdomainCompare = (parsedA.subdomain || '').localeCompare(parsedB.subdomain || '');
+    if (subdomainCompare !== 0) return subdomainCompare;
+
+    var titleCompare = titleA.localeCompare(titleB);
+    if (titleCompare !== 0) return titleCompare;
+
+    return compareByUrlComponents(urlA, urlB);
+}
+
 // Group suspended tabs to left side if 'groupSuspendedTabs' is checked in settings
 function sortByTitleOrUrl(tabs, sortBy, groupSuspendedTabs, sortPinnedTabs) {
     // Group suspended tabs to the left, using comparator for unsuspended tabs.
@@ -205,6 +224,8 @@ function sortByTitleOrUrl(tabs, sortBy, groupSuspendedTabs, sortPinnedTabs) {
 
         if (sortBy == "title") {
             return _titleComparator(a, b, groupSuspendedTabs, sortPinnedTabs);
+        } else if (sortBy == "urlTitle") {
+            return _urlTitleComparator(a, b, groupSuspendedTabs, sortPinnedTabs);
         } else {
             return _urlComparator(a, b, groupSuspendedTabs, sortPinnedTabs);
         }
@@ -242,6 +263,25 @@ function sortByTitleOrUrl(tabs, sortBy, groupSuspendedTabs, sortPinnedTabs) {
         var urlB = tabToUrl(b, groupSuspendedTabs);
 
         return compareByUrlComponents(urlA, urlB);
+    }
+
+    // Shift suspended tabs left (if groupSuspendedTabs == true). Otherwise, sort by root domain, then subdomain, then title.
+    function _urlTitleComparator(a, b, groupSuspendedTabs, sortPinnedTabs) {
+
+        if (!sortPinnedTabs && (a.pinned || b.pinned)) {
+            return 0;
+        }
+
+        // Shift suspended tabs left...
+        if (groupSuspendedTabs) {
+            if (isSuspended(a) && !isSuspended(b)) return -1;
+            if (!isSuspended(a) && isSuspended(b)) return 1;
+        }
+
+        var urlA = tabToUrl(a, groupSuspendedTabs);
+        var urlB = tabToUrl(b, groupSuspendedTabs);
+
+        return compareByDomainAndTitle(urlA, a.title, urlB, b.title);
     }
 }
 
