@@ -12,6 +12,9 @@ var SUSPENDED_PREFIX_LEN = SUSPENDED_PREFIX.length;
 
 var tabSet = new Set([]);
 
+// Prefix a tab group's title with this marker to keep it from being rearranged, e.g. "🔒 Work"
+const LOCKED_GROUP_MARKER = "🔒";
+
 // Extension icon onClick handler...
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     if (request.type == "click_event") {
@@ -63,6 +66,10 @@ async function sortTabGroups() {
         dedupeTabs: false
     });
 
+    TAB_SUSPENDER_EXTENSION_ID = settings.tabSuspenderExtensionId;
+    SUSPENDED_PREFIX = 'chrome-extension://' + TAB_SUSPENDER_EXTENSION_ID + '/suspended.html#';
+    SUSPENDED_PREFIX_LEN = SUSPENDED_PREFIX.length;
+
     // I believe this was unnecessary in manifest v2, IIRC, and that the "default window" worked as expected though that's not the case in manifest v3.
     let currentWindow  = await chrome.windows.getLastFocused()
 
@@ -74,50 +81,75 @@ async function sortTabGroups() {
     var groupOffset = pinnedTabs.length
 
     if (pinnedTabs.length > 0 && settings.sortPinnedTabs) {
-        sortTabs(pinnedTabs, pinnedTabs[0].groupId, settings)
+        await sortTabs(pinnedTabs, pinnedTabs[0].groupId, settings)
     }
 
-    await chrome.tabGroups.query({ windowId: currentWindow.id }, function (tabGroups) {
-        // You can prefix your tab group names with numeric values if you'd like to override the sort order...
-        tabGroups.sort(function (a, b) {
-            return b.title.localeCompare(a.title);
-        });
+    let tabGroups = await chrome.tabGroups.query({ windowId: currentWindow.id })
+    let windowTabs = await chrome.tabs.query({ windowId: currentWindow.id })
 
-        // Sort tab groups
-        for (let i = 0; i < tabGroups.length; i++) {
-            let groupId = tabGroups[i].id
-            let collapsed = tabGroups[i].collapsed
-            chrome.tabGroups.move(groupId, { index: groupOffset });
-            chrome.tabs.query({
-                windowId: currentWindow.id,
-                groupId: groupId
-            }, function(tabs) {
-                groupOffset += tabs.length
-                // Sort tabs tab group's tabs while we have a reference to them
-                sortTabs(tabs, groupId, settings, collapsed)
-            })
+    // Order tab groups by their current position in the tab strip...
+    let groupPositions = new Map()
+    for (let tab of windowTabs) {
+        if (tab.groupId > -1 && !groupPositions.has(tab.groupId)) {
+            groupPositions.set(tab.groupId, tab.index)
         }
-        // Sort ungrouped tabs
-        chrome.tabs.query({
+    }
+    tabGroups.sort(function (a, b) {
+        return groupPositions.get(a.id) - groupPositions.get(b.id);
+    });
+
+    // Seed tabSet with locked groups' tabs so dedupe closes their duplicates elsewhere rather than the locked tabs themselves...
+    if (settings.dedupeTabs) {
+        for (let tab of windowTabs) {
+            let group = tabGroups.find((g) => g.id === tab.groupId)
+            if (group && isLockedGroup(group)) {
+                tabSet.add(tabToUrl(tab).href)
+            }
+        }
+    }
+
+    // You can prefix your tab group names with numeric values if you'd like to override the sort order...
+    let unlockedGroups = tabGroups.filter((g) => !isLockedGroup(g)).sort(function (a, b) {
+        return a.title.localeCompare(b.title);
+    });
+    // Locked groups keep their slot in the group order, and unlocked groups fill the remaining slots alphabetically...
+    let orderedGroups = tabGroups.map((g) => isLockedGroup(g) ? g : unlockedGroups.shift())
+
+    // Sort tab groups
+    for (let group of orderedGroups) {
+        await chrome.tabGroups.move(group.id, { index: groupOffset });
+        let tabs = await chrome.tabs.query({
             windowId: currentWindow.id,
-            pinned: false,
-            groupId: -1
-        }, function(tabs) {
-            sortTabs(tabs, -1, settings)
+            groupId: group.id
         })
-
-        // Clear tabSet after every run to ensure that we don't remove presorted tabs as duplicate tabs on subsequent sorts...
-        if (settings.dedupeTabs) {
-            tabSet.clear()
+        groupOffset += tabs.length
+        // Sort tabs tab group's tabs while we have a reference to them, leaving locked groups' tabs untouched
+        if (!isLockedGroup(group)) {
+            await sortTabs(tabs, group.id, settings, group.collapsed)
         }
+    }
+
+    // Sort ungrouped tabs
+    let ungroupedTabs = await chrome.tabs.query({
+        windowId: currentWindow.id,
+        pinned: false,
+        groupId: -1
     })
+    await sortTabs(ungroupedTabs, -1, settings)
+
+    // Clear tabSet after every run to ensure that we don't remove presorted tabs as duplicate tabs on subsequent sorts...
+    if (settings.dedupeTabs) {
+        tabSet.clear()
+    }
+}
+
+// Tab groups whose title starts with LOCKED_GROUP_MARKER keep their position and tab order when sorting
+function isLockedGroup(group) {
+    return (group.title || '').trimStart().startsWith(LOCKED_GROUP_MARKER);
 }
 
 async function sortTabs(tabs, groupId, settings, collapsed = false) {
     if (tabs.length > 0) {
-        TAB_SUSPENDER_EXTENSION_ID = settings.tabSuspenderExtensionId;
-        SUSPENDED_PREFIX = 'chrome-extension://' + TAB_SUSPENDER_EXTENSION_ID + '/suspended.html#';
-        SUSPENDED_PREFIX_LEN = SUSPENDED_PREFIX.length;
         let firstTabIndex = tabs[0].index
         switch (settings.sortBy) {
             case "url":
