@@ -10,7 +10,11 @@ var TAB_SUSPENDER_EXTENSION_ID = "";
 var SUSPENDED_PREFIX = 'chrome-extension://' + TAB_SUSPENDER_EXTENSION_ID + '/suspended.html#';
 var SUSPENDED_PREFIX_LEN = SUSPENDED_PREFIX.length;
 
-var tabSet = new Set([]);
+// Query parameters that only track where a link came from, ignored by dedupe if 'dedupeIgnoreTrackingParams' is set
+const TRACKING_PARAM = /^(utm_\w+|fbclid|gclid|dclid|gbraid|wbraid|msclkid|yclid|mc_cid|mc_eid|igshid|_ga|_gl)$/i;
+
+// How long the post-sort badge stays on the extension icon
+const BADGE_DURATION_MS = 4000;
 
 // Prefix a tab group's title with this marker to keep it from being rearranged, e.g. "🔒 Work"
 const LOCKED_GROUP_MARKER = "🔒";
@@ -18,8 +22,17 @@ const LOCKED_GROUP_MARKER = "🔒";
 // Extension icon onClick handler...
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     if (request.type == "click_event") {
-        sortTabGroups();
+        // closeTabIds is set when the user confirmed a duplicates preview, limiting dedupe to the tabs they kept checked
+        let closeTabIds = request.closeTabIds ? new Set(request.closeTabIds) : null
+        sortTabGroups({ closeTabIds: closeTabIds }).then((run) => showSortBadge(run.closedTabCount), showErrorBadge);
         sendResponse({ message: 'success' });
+    } else if (request.type == "preview_duplicates") {
+        sortTabGroups({ dryRun: true }).then(
+            (run) => sendResponse({ message: 'success', duplicateSets: run.duplicateSets }),
+            (error) => sendResponse({ message: 'error', error: String(error) })
+        );
+        // Keep the message channel open for the async response
+        return true;
     }
 })
 
@@ -54,7 +67,8 @@ chrome.runtime.onInstalled.addListener(function (details) {
 })
 
 // Separate windows must be sorted separately - this is to prevent undesired accidental sorting in other windows...
-async function sortTabGroups() {
+// A dryRun computes which tabs dedupe would close (returned as run.duplicateSets) without moving or closing anything.
+async function sortTabGroups({ dryRun = false, closeTabIds = null } = {}) {
 
     let settings = await chrome.storage.sync.get({
         sortBy: "url",
@@ -63,8 +77,23 @@ async function sortTabGroups() {
         groupSuspendedTabs: false,
         tabSuspenderExtensionId: THE_MARVELLOUS_SUSPENDER_EXTENSION_ID,
         sortPinnedTabs: false,
-        dedupeTabs: false
+        dedupeTabs: false,
+        dedupeIgnoreHash: false,
+        dedupeIgnoreTrackingParams: false,
+        dedupeIgnoreTrailingSlash: false,
+        dedupeKeepActiveTab: true
     });
+
+    let run = {
+        dryRun: dryRun,
+        closeTabIds: closeTabIds,
+        // Maps each deduped URL to the id of the tab that keeps it open
+        keepers: new Map(),
+        tabsById: new Map(),
+        // Kept tab id -> the duplicate tabs found for it, in the order dedupe finds them
+        duplicatesByKeeper: new Map(),
+        closedTabCount: 0
+    }
 
     TAB_SUSPENDER_EXTENSION_ID = settings.tabSuspenderExtensionId;
     SUSPENDED_PREFIX = 'chrome-extension://' + TAB_SUSPENDER_EXTENSION_ID + '/suspended.html#';
@@ -80,12 +109,11 @@ async function sortTabGroups() {
     })
     var groupOffset = pinnedTabs.length
 
-    if (pinnedTabs.length > 0 && settings.sortPinnedTabs) {
-        await sortTabs(pinnedTabs, pinnedTabs[0].groupId, settings)
-    }
-
     let tabGroups = await chrome.tabGroups.query({ windowId: currentWindow.id })
     let windowTabs = await chrome.tabs.query({ windowId: currentWindow.id })
+    for (let tab of windowTabs) {
+        run.tabsById.set(tab.id, tab)
+    }
 
     // Order tab groups by their current position in the tab strip...
     let groupPositions = new Map()
@@ -98,14 +126,23 @@ async function sortTabGroups() {
         return groupPositions.get(a.id) - groupPositions.get(b.id);
     });
 
-    // Seed tabSet with locked groups' tabs so dedupe closes their duplicates elsewhere rather than the locked tabs themselves...
+    // Seed run.keepers with locked groups' tabs so dedupe closes their duplicates elsewhere rather than the locked tabs themselves...
     if (settings.dedupeTabs) {
         for (let tab of windowTabs) {
             let group = tabGroups.find((g) => g.id === tab.groupId)
             if (group && isLockedGroup(group)) {
-                tabSet.add(tabToUrl(tab).href)
+                keepTab(run, tab, settings)
             }
         }
+        // ...then the active tab, unless a locked tab already keeps its URL
+        let activeTab = windowTabs.find((tab) => tab.active)
+        if (settings.dedupeKeepActiveTab && activeTab) {
+            keepTab(run, activeTab, settings)
+        }
+    }
+
+    if (pinnedTabs.length > 0 && settings.sortPinnedTabs) {
+        await sortTabs(run, pinnedTabs, pinnedTabs[0].groupId, settings)
     }
 
     // You can prefix your tab group names with numeric values if you'd like to override the sort order...
@@ -117,7 +154,9 @@ async function sortTabGroups() {
 
     // Sort tab groups
     for (let group of orderedGroups) {
-        await chrome.tabGroups.move(group.id, { index: groupOffset });
+        if (!dryRun) {
+            await chrome.tabGroups.move(group.id, { index: groupOffset });
+        }
         let tabs = await chrome.tabs.query({
             windowId: currentWindow.id,
             groupId: group.id
@@ -125,7 +164,7 @@ async function sortTabGroups() {
         groupOffset += tabs.length
         // Sort tabs tab group's tabs while we have a reference to them, leaving locked groups' tabs untouched
         if (!isLockedGroup(group)) {
-            await sortTabs(tabs, group.id, settings, group.collapsed)
+            await sortTabs(run, tabs, group.id, settings, group.collapsed)
         }
     }
 
@@ -135,11 +174,56 @@ async function sortTabGroups() {
         pinned: false,
         groupId: -1
     })
-    await sortTabs(ungroupedTabs, -1, settings)
+    await sortTabs(run, ungroupedTabs, -1, settings)
 
-    // Clear tabSet after every run to ensure that we don't remove presorted tabs as duplicate tabs on subsequent sorts...
-    if (settings.dedupeTabs) {
-        tabSet.clear()
+    run.duplicateSets = Array.from(run.duplicatesByKeeper, ([keeperId, duplicates]) => ({
+        keeper: tabSummary(run.tabsById.get(keeperId)),
+        duplicates: duplicates.map(tabSummary)
+    }))
+    return run
+}
+
+// The parts of a tab the duplicates preview displays
+function tabSummary(tab) {
+    return { id: tab.id, title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl }
+}
+
+// Flash a checkmark on the extension icon after sorting, or the number of duplicate tabs closed
+async function showSortBadge(closedCount) {
+    await chrome.action.setBadgeBackgroundColor({ color: closedCount > 0 ? "#d9822b" : "#2e7d32" })
+    await chrome.action.setBadgeText({ text: closedCount > 0 ? "-" + closedCount : "✓" })
+    setTimeout(() => chrome.action.setBadgeText({ text: "" }), BADGE_DURATION_MS)
+}
+
+async function showErrorBadge(error) {
+    console.error("Super Tab Sorter failed to sort tabs:", error)
+    await chrome.action.setBadgeBackgroundColor({ color: "#c62828" })
+    await chrome.action.setBadgeText({ text: "!" })
+    setTimeout(() => chrome.action.setBadgeText({ text: "" }), BADGE_DURATION_MS)
+}
+
+// URL used to detect duplicate tabs, normalized according to the dedupe settings
+function dedupeKey(tab, settings) {
+    let url = tabToUrl(tab)
+    if (settings.dedupeIgnoreHash) {
+        url.hash = ''
+    }
+    if (settings.dedupeIgnoreTrackingParams) {
+        for (let param of Array.from(url.searchParams.keys())) {
+            if (TRACKING_PARAM.test(param)) url.searchParams.delete(param)
+        }
+    }
+    if (settings.dedupeIgnoreTrailingSlash) {
+        url.pathname = url.pathname.replace(/\/+$/, '')
+    }
+    return url.href
+}
+
+// Mark tab as the one to keep for its URL, unless another tab already keeps it
+function keepTab(run, tab, settings) {
+    let key = dedupeKey(tab, settings)
+    if (!run.keepers.has(key)) {
+        run.keepers.set(key, tab.id)
     }
 }
 
@@ -148,7 +232,7 @@ function isLockedGroup(group) {
     return (group.title || '').trimStart().startsWith(LOCKED_GROUP_MARKER);
 }
 
-async function sortTabs(tabs, groupId, settings, collapsed = false) {
+async function sortTabs(run, tabs, groupId, settings, collapsed = false) {
     if (tabs.length > 0) {
         let firstTabIndex = tabs[0].index
         switch (settings.sortBy) {
@@ -165,8 +249,28 @@ async function sortTabs(tabs, groupId, settings, collapsed = false) {
         // Convert array of tabs to array of tab IDs, deduping tabs (in current window) if enabled in settings...
         var tabIds = []
         if (settings.dedupeTabs) {
-            tabIds = Array.from(new Set(tabs.flatMap((tab) => tabSet.has(tabToUrl(tab).href) ?  ( chrome.tabs.remove(tab.id), [] ) : (tabSet.add(tabToUrl(tab).href), tab.id))))
+            let duplicateIds = []
+            for (let tab of tabs) {
+                keepTab(run, tab, settings)
+                let keeperId = run.keepers.get(dedupeKey(tab, settings))
+                // After a preview, only close duplicates the user confirmed - anything else stays open
+                if (keeperId === tab.id || (run.closeTabIds && !run.closeTabIds.has(tab.id))) {
+                    tabIds.push(tab.id)
+                } else {
+                    duplicateIds.push(tab.id)
+                    if (!run.duplicatesByKeeper.has(keeperId)) run.duplicatesByKeeper.set(keeperId, [])
+                    run.duplicatesByKeeper.get(keeperId).push(tab)
+                }
+            }
+            if (run.dryRun) return
+            if (duplicateIds.length > 0) {
+                await chrome.tabs.remove(duplicateIds)
+                run.closedTabCount += duplicateIds.length
+            }
+            // Every tab here was a duplicate, so there's nothing left to move
+            if (tabIds.length === 0) return
         } else {
+            if (run.dryRun) return
             tabIds = tabs.map(function(tab){ return tab.id; })
         }
         // Relocate tabs to their new positions...

@@ -61,6 +61,36 @@
                             Dedupe tabs (in current window)
                         </label>
                     </div>
+                    <div class="form-check dedupe-sub-option">
+                        <input type="checkbox" class="form-check-input dedupe-option" id="dedupeIgnoreHash" name="dedupeIgnoreHash">
+                        <label class="form-check-label" for="dedupeIgnoreHash">
+                            Ignore the #anchor at the end of URLs
+                        </label>
+                    </div>
+                    <div class="form-check dedupe-sub-option">
+                        <input type="checkbox" class="form-check-input dedupe-option" id="dedupeIgnoreTrackingParams" name="dedupeIgnoreTrackingParams">
+                        <label class="form-check-label" for="dedupeIgnoreTrackingParams">
+                            Ignore tracking parameters (utm_*, fbclid, gclid, etc.)
+                        </label>
+                    </div>
+                    <div class="form-check dedupe-sub-option">
+                        <input type="checkbox" class="form-check-input dedupe-option" id="dedupeIgnoreTrailingSlash" name="dedupeIgnoreTrailingSlash">
+                        <label class="form-check-label" for="dedupeIgnoreTrailingSlash">
+                            Ignore a trailing slash at the end of the path
+                        </label>
+                    </div>
+                    <div class="form-check dedupe-sub-option">
+                        <input type="checkbox" class="form-check-input dedupe-option" id="dedupeKeepActiveTab" name="dedupeKeepActiveTab">
+                        <label class="form-check-label" for="dedupeKeepActiveTab">
+                            Keep the active tab when it is a duplicate
+                        </label>
+                    </div>
+                    <div class="form-check dedupe-sub-option">
+                        <input type="checkbox" class="form-check-input dedupe-option" id="dedupeConfirm" name="dedupeConfirm">
+                        <label class="form-check-label" for="dedupeConfirm">
+                            Preview duplicates before closing them
+                        </label>
+                    </div>
                     <div class="form-check">
                         <input type="checkbox" class="form-check-input" id="groupSuspendedTabs" name="groupSuspendedTabs">
                         <label class="form-check-label" for="groupSuspendedTabs">

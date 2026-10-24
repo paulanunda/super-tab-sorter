@@ -105,6 +105,17 @@
                                     <p>
                                         If checked, tabs will be deduped while sorting and only the left-most (post-sort order) instance will be preserved. This doesn't dedupe tabs across separate windows, you should install a dedicated duplicate tab removal extension if you want that capability.
                                     </p>
+                                    <p>
+                                        By default, tabs are only duplicates if their URLs match exactly. The options below the checkbox loosen that match:
+                                        <ul>
+                                            <li><strong>Ignore the #anchor</strong> treats <code>page#intro</code> and <code>page#usage</code> as the same page.</li>
+                                            <li><strong>Ignore tracking parameters</strong> drops <code>utm_*</code>, <code>fbclid</code>, <code>gclid</code>, and similar link-tracking parameters before comparing.</li>
+                                            <li><strong>Ignore a trailing slash</strong> treats <code>example.com/docs/</code> and <code>example.com/docs</code> as the same page.</li>
+                                            <li><strong>Keep the active tab</strong> (on by default) keeps the tab you're looking at and closes its other copies instead, even if it isn't the left-most one.</li>
+                                            <li><strong>Preview duplicates before closing them</strong> keeps the popup open when sorting would close tabs. It lists each tab being kept with its duplicates beneath it - uncheck any you want to keep open, then press <strong>Enter</strong> (or <strong>Sort &amp; close</strong>) to sort, or <strong>Esc</strong> to cancel without sorting. If there are no duplicates, tabs are sorted right away.</li>
+                                        </ul>
+                                        After sorting, the extension icon briefly shows how many duplicate tabs were closed (e.g. <strong>-3</strong>), or <strong>✓</strong> if none were.
+                                    </p>
                                     <h5>Group suspended tabs together (applicable if using an extension derived from The Great Suspender)</h5>
                                     <p>Other tab sorting extensions that I've used have grouped all tabs suspended by The Great Suspender together, because The Great Suspender modifies the URL of
                                         suspended tabs and retains the original URL as a query parameter. I was a major fan of the original The Great Suspender (before the transfer of ownership), but have found that sorting behavior annoying, which was one of my primary

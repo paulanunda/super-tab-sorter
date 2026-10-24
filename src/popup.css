@@ -1,0 +1,118 @@
+body {
+    width: 400px;
+    margin: 0;
+    padding: 12px;
+    font: 13px system-ui, sans-serif;
+    color: #212529;
+    background: #fff;
+}
+
+h1 {
+    margin: 0 0 4px;
+    font-size: 15px;
+}
+
+.hint {
+    margin: 4px 0 8px;
+    color: #6c757d;
+    font-size: 12px;
+}
+
+ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+#duplicate-sets {
+    max-height: 360px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+#duplicate-sets > li {
+    padding: 6px 8px;
+    border-bottom: 1px solid #f1f4f6;
+}
+
+#duplicate-sets > li:last-child {
+    border-bottom: none;
+}
+
+#duplicate-sets ul {
+    margin-left: 22px;
+}
+
+.keeper,
+.duplicate {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+}
+
+.duplicate {
+    cursor: pointer;
+}
+
+.tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.favicon {
+    width: 16px;
+    height: 16px;
+    flex: none;
+}
+
+.tab-text {
+    min-width: 0;
+}
+
+.tab-title,
+.tab-url {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.tab-url {
+    color: #6c757d;
+    font-size: 11px;
+}
+
+.badge {
+    flex: none;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #e8f5e9;
+    color: #2e7d32;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+button {
+    padding: 5px 10px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    background: #f8f9fa;
+    font: inherit;
+    cursor: pointer;
+}
+
+button.primary {
+    border-color: #007bff;
+    background: #007bff;
+    color: #fff;
+}

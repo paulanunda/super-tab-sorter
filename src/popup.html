@@ -1,7 +1,20 @@
-
 <html>
-    <body style="width: 400px">
-      <p>Please ignore - this is the result of the mandatory Chrome extension manifest v3 changes and you should only be seeing this because of the modal dialog when first activated after a new installation or extension version update.
+    <head>
+      <meta charset="utf-8">
+      <link rel="stylesheet" href="./popup.css">
+    </head>
+    <body>
+      <p id="notice">Please ignore - this is the result of the mandatory Chrome extension manifest v3 changes and you should only be seeing this because of the modal dialog when first activated after a new installation or extension version update.</p>
+      <div id="preview" hidden>
+        <h1>Duplicate tabs</h1>
+        <p class="hint">Checked tabs will be closed while sorting. Uncheck any you want to keep.</p>
+        <ul id="duplicate-sets"></ul>
+        <div class="actions">
+          <button id="close-and-sort" class="primary">Sort</button>
+          <button id="sort-only">Sort without closing</button>
+        </div>
+        <p class="hint">Enter to confirm &middot; Esc to cancel</p>
+      </div>
       <script src="./popup.js"></script>
     </body>
 </html>
