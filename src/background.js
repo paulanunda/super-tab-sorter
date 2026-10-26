@@ -142,7 +142,8 @@ async function sortTabGroups({ dryRun = false, closeTabIds = null } = {}) {
     }
 
     if (pinnedTabs.length > 0 && settings.sortPinnedTabs) {
-        await sortTabs(run, pinnedTabs, pinnedTabs[0].groupId, settings)
+        // Dedupe may close pinned tabs, so groups start after the pinned tabs that remain
+        groupOffset = await sortTabs(run, pinnedTabs, pinnedTabs[0].groupId, settings)
     }
 
     // You can prefix your tab group names with numeric values if you'd like to override the sort order...
@@ -161,10 +162,12 @@ async function sortTabGroups({ dryRun = false, closeTabIds = null } = {}) {
             windowId: currentWindow.id,
             groupId: group.id
         })
-        groupOffset += tabs.length
-        // Sort tabs tab group's tabs while we have a reference to them, leaving locked groups' tabs untouched
-        if (!isLockedGroup(group)) {
-            await sortTabs(run, tabs, group.id, settings, group.collapsed)
+        // Sort tabs tab group's tabs while we have a reference to them, leaving locked groups' tabs untouched.
+        // Advance by the tabs left open, since moving the next group past closed duplicates lands it inside another group
+        if (isLockedGroup(group)) {
+            groupOffset += tabs.length
+        } else {
+            groupOffset += await sortTabs(run, tabs, group.id, settings, group.collapsed)
         }
     }
 
@@ -232,62 +235,63 @@ function isLockedGroup(group) {
     return (group.title || '').trimStart().startsWith(LOCKED_GROUP_MARKER);
 }
 
+// Returns the number of tabs left open after dedupe
 async function sortTabs(run, tabs, groupId, settings, collapsed = false) {
-    if (tabs.length > 0) {
-        let firstTabIndex = tabs[0].index
-        switch (settings.sortBy) {
-            case "url":
-            case "title":
-            case "urlTitle":
-                sortByTitleOrUrl(tabs, settings.sortBy, settings.groupSuspendedTabs, settings.sortPinnedTabs);
-                break;
-            case "custom":
-                sortByCustom(tabs, settings.groupFrom, settings.groupSuspendedTabs, settings.preserveOrderWithinGroups, settings.sortPinnedTabs);
-                break;
-        }
+    if (tabs.length === 0) return 0
+    let firstTabIndex = tabs[0].index
+    switch (settings.sortBy) {
+        case "url":
+        case "title":
+        case "urlTitle":
+            sortByTitleOrUrl(tabs, settings.sortBy, settings.groupSuspendedTabs, settings.sortPinnedTabs);
+            break;
+        case "custom":
+            sortByCustom(tabs, settings.groupFrom, settings.groupSuspendedTabs, settings.preserveOrderWithinGroups, settings.sortPinnedTabs);
+            break;
+    }
 
-        // Convert array of tabs to array of tab IDs, deduping tabs (in current window) if enabled in settings...
-        var tabIds = []
-        if (settings.dedupeTabs) {
-            let duplicateIds = []
-            for (let tab of tabs) {
-                keepTab(run, tab, settings)
-                let keeperId = run.keepers.get(dedupeKey(tab, settings))
-                // After a preview, only close duplicates the user confirmed - anything else stays open
-                if (keeperId === tab.id || (run.closeTabIds && !run.closeTabIds.has(tab.id))) {
-                    tabIds.push(tab.id)
-                } else {
-                    duplicateIds.push(tab.id)
-                    if (!run.duplicatesByKeeper.has(keeperId)) run.duplicatesByKeeper.set(keeperId, [])
-                    run.duplicatesByKeeper.get(keeperId).push(tab)
-                }
+    // Convert array of tabs to array of tab IDs, deduping tabs (in current window) if enabled in settings...
+    var tabIds = []
+    if (settings.dedupeTabs) {
+        let duplicateIds = []
+        for (let tab of tabs) {
+            keepTab(run, tab, settings)
+            let keeperId = run.keepers.get(dedupeKey(tab, settings))
+            // After a preview, only close duplicates the user confirmed - anything else stays open
+            if (keeperId === tab.id || (run.closeTabIds && !run.closeTabIds.has(tab.id))) {
+                tabIds.push(tab.id)
+            } else {
+                duplicateIds.push(tab.id)
+                if (!run.duplicatesByKeeper.has(keeperId)) run.duplicatesByKeeper.set(keeperId, [])
+                run.duplicatesByKeeper.get(keeperId).push(tab)
             }
-            if (run.dryRun) return
-            if (duplicateIds.length > 0) {
-                await chrome.tabs.remove(duplicateIds)
-                run.closedTabCount += duplicateIds.length
-            }
-            // Every tab here was a duplicate, so there's nothing left to move
-            if (tabIds.length === 0) return
-        } else {
-            if (run.dryRun) return
-            tabIds = tabs.map(function(tab){ return tab.id; })
         }
-        // Relocate tabs to their new positions...
-        await chrome.tabs.move(tabIds, { index: firstTabIndex });
+        if (run.dryRun) return tabIds.length
+        if (duplicateIds.length > 0) {
+            await chrome.tabs.remove(duplicateIds)
+            run.closedTabCount += duplicateIds.length
+        }
+        // Every tab here was a duplicate, so there's nothing left to move
+        if (tabIds.length === 0) return 0
+    } else {
+        if (run.dryRun) return tabs.length
+        tabIds = tabs.map(function(tab){ return tab.id; })
+    }
+    // Relocate tabs to their new positions...
+    await chrome.tabs.move(tabIds, { index: firstTabIndex });
 
-        // Regroup tabs that were moved since moving them appears to remove them from the group...
-        if (groupId > -1) {
-            await chrome.tabs.group({
-                groupId: groupId,
-                tabIds: tabIds
-            })
-            // Regrouping expands collapsed groups, so restore their collapsed state...
-            if (collapsed) {
-                await chrome.tabGroups.update(groupId, { collapsed: true })
-            }
+    // Regroup tabs that were moved since moving them appears to remove them from the group...
+    if (groupId > -1) {
+        await chrome.tabs.group({
+            groupId: groupId,
+            tabIds: tabIds
+        })
+        // Regrouping expands collapsed groups, so restore their collapsed state...
+        if (collapsed) {
+            await chrome.tabGroups.update(groupId, { collapsed: true })
         }
     }
+    return tabIds.length
 }
 
 // Returns the tab's suspended URL if 'groupSuspendedTabs' is set - otherwise, return's the current tab's URL or suspended tab's original URL
